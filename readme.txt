@@ -4,7 +4,7 @@ Tags: agency, management, pairing, application-passwords, remote
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.2.0
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,9 @@ The local connection state is cleared. The platform-side connection still exists
 No. The settings page and pairing require the `manage_options` capability, and Application Passwords are created for the current user. Pair as an administrator; the platform then uses that user's credentials for REST API access.
 
 == Changelog ==
+
+= 0.3.0 =
+* Health reporting: the plugin now reports WP version, active theme, plugin count, and a computed health score to the platform daily + on pairing. Surfaced on the connection card.
 
 = 0.2.0 =
 * SSO auto-login: the platform's connection card gains a "Log into WP" button that opens this WP's admin in a new tab, logged in as the paired user. Uses single-use, 5-minute-expiry tokens validated against the platform.

@@ -3,7 +3,7 @@
  * Plugin Name:       Finn-Loop Connect
  * Plugin URI:        https://github.com/Kananalibayov/finn-loop-wp-plugin
  * Description:       Companion plugin for Finn-Loop. Connects this WordPress to your agency platform via a one-time pairing code — enables remote management, health reporting, and SSO from the dashboard.
- * Version:           0.2.0
+ * Version:           0.3.0
  * Author:            Finn-Loop
  * Author URI:        https://github.com/Kananalibayov/finn-loop
  * Text Domain:       finn-loop-connect
@@ -85,6 +85,8 @@ final class FinnLoop_Connect {
 		add_action( 'admin_notices', array( $this, 'render_admin_notices' ) );
 		// AC-6 (issue #61): register the SSO REST endpoint.
 		add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
+		// AC-9 (issue #62): daily health report cron hook.
+		add_action( 'finn_loop_daily_health_report', array( $this, 'report_health' ) );
 	}
 
 	/**
@@ -276,6 +278,7 @@ final class FinnLoop_Connect {
 		}
 
 		// AC-4e: store the connection state locally.
+		// AC-7 (issue #62): also store healthSecret from the pairing response.
 		update_option(
 			self::OPTION_KEY,
 			array(
@@ -283,9 +286,13 @@ final class FinnLoop_Connect {
 				'connectionId' => isset( $json['connectionId'] ) ? intval( $json['connectionId'] ) : 0,
 				'username'     => $user->user_login,
 				'pairedAt'     => current_time( 'mysql', true ),
+				'healthSecret' => isset( $json['healthSecret'] ) ? $json['healthSecret'] : '',
 			),
 			false
 		);
+
+		// AC-9 (issue #62): report health immediately after pairing.
+		$this->report_health();
 
 		return array(
 			'type'    => 'success',
@@ -546,6 +553,72 @@ final class FinnLoop_Connect {
 	}
 
 	/**
+	 * AC-8 (issue #62): collect WP health data.
+	 *
+	 * @return array{wpVersion:string,themeName:string,pluginCount:int,healthScore:int}
+	 */
+	public function collect_health_data() {
+		global $wp_version;
+		$theme = wp_get_theme();
+		$active_plugins = get_option( 'active_plugins', array() );
+		$plugin_count = is_array( $active_plugins ) ? count( $active_plugins ) : 0;
+
+		// Simple health score: start at 10, subtract penalties.
+		$score = 10;
+		if ( version_compare( PHP_VERSION, '7.4', '<' ) ) {
+			$score -= 1;
+		}
+		if ( version_compare( PHP_VERSION, '7.0', '<' ) ) {
+			$score -= 2;
+		}
+		if ( $plugin_count > 20 ) {
+			$score -= 1;
+		}
+		if ( $score < 0 ) {
+			$score = 0;
+		}
+
+		return array(
+			'wpVersion'   => is_string( $wp_version ) ? $wp_version : 'unknown',
+			'themeName'   => $theme ? $theme->get( 'Name' ) : 'unknown',
+			'pluginCount' => $plugin_count,
+			'healthScore' => $score,
+		);
+	}
+
+	/**
+	 * AC-9 (issue #62): report health data to the platform.
+	 */
+	public function report_health() {
+		$settings = $this->get_settings();
+		if ( ! $settings || empty( $settings['healthSecret'] ) ) {
+			return;
+		}
+
+		$data     = $this->collect_health_data();
+		$endpoint = rtrim( $settings['platformUrl'], '/' ) . '/api/wp/connections/' . intval( $settings['connectionId'] ) . '/health-report';
+
+		wp_remote_post(
+			$endpoint,
+			array(
+				'timeout'     => 30,
+				'redirection' => 0,
+				'headers'     => array(
+					'Content-Type' => 'application/json',
+					'Accept'       => 'application/json',
+					'User-Agent'   => 'FinnLoopConnect/' . $this->plugin_version() . ' (health report)',
+				),
+				'body'        => wp_json_encode(
+					array_merge(
+						$data,
+						array( 'healthSecret' => $settings['healthSecret'] )
+					)
+				),
+			)
+		);
+	}
+
+	/**
 	 * The plugin's version (from the header).
 	 *
 	 * @return string
@@ -561,3 +634,20 @@ final class FinnLoop_Connect {
 
 // Boot the plugin on `plugins_loaded`.
 add_action( 'plugins_loaded', array( 'FinnLoop_Connect', 'instance' ) );
+
+// AC-10 (issue #62): schedule/clear the daily health-report cron.
+register_activation_hook( __FILE__, 'finn_loop_activate_cron' );
+register_deactivation_hook( __FILE__, 'finn_loop_deactivate_cron' );
+
+function finn_loop_activate_cron() {
+	if ( ! wp_next_scheduled( 'finn_loop_daily_health_report' ) ) {
+		wp_schedule_event( time(), 'daily', 'finn_loop_daily_health_report' );
+	}
+}
+
+function finn_loop_deactivate_cron() {
+	$timestamp = wp_next_scheduled( 'finn_loop_daily_health_report' );
+	if ( $timestamp ) {
+		wp_unschedule_event( $timestamp, 'finn_loop_daily_health_report' );
+	}
+}
