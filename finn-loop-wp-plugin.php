@@ -3,7 +3,7 @@
  * Plugin Name:       Finn-Loop Connect
  * Plugin URI:        https://github.com/Kananalibayov/finn-loop-wp-plugin
  * Description:       Companion plugin for Finn-Loop. Connects this WordPress to your agency platform via a one-time pairing code — enables remote management, health reporting, and SSO from the dashboard.
- * Version:           0.1.0
+ * Version:           0.2.0
  * Author:            Finn-Loop
  * Author URI:        https://github.com/Kananalibayov/finn-loop
  * Text Domain:       finn-loop-connect
@@ -83,6 +83,8 @@ final class FinnLoop_Connect {
 		add_action( 'admin_init', array( $this, 'handle_form_submission' ) );
 		// Show admin notices (success / error) from the last action.
 		add_action( 'admin_notices', array( $this, 'render_admin_notices' ) );
+		// AC-6 (issue #61): register the SSO REST endpoint.
+		add_action( 'rest_api_init', array( $this, 'register_rest_routes' ) );
 	}
 
 	/**
@@ -417,6 +419,130 @@ final class FinnLoop_Connect {
 			esc_attr( $classes ),
 			wp_kses( $message, array( 'code' => array() ) ) // allow <code> tags in messages.
 		);
+	}
+
+	/**
+	 * The plugin's version (from the header).
+	 *
+	 * @return string
+	 */
+	/**
+	 * AC-6 (issue #61): register the SSO REST endpoint.
+	 *
+	 * @return void
+	 */
+	public function register_rest_routes() {
+		register_rest_route(
+			'finn-loop/v1',
+			'/sso',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'handle_sso_login' ),
+				'permission_callback' => '__return_true', // Public — the token is the credential.
+			)
+		);
+	}
+
+	/**
+	 * AC-6 (issue #61): the SSO login handler.
+	 *
+	 * Receives a single-use token, validates it against the platform, and on
+	 * success logs the browser in as the paired WP user + redirects to admin.
+	 *
+	 * @param WP_REST_Request $request The REST request.
+	 * @return WP_REST_Response|void
+	 */
+	public function handle_sso_login( $request ) {
+		$token = $request->get_param( 'token' );
+		if ( ! $token || ! is_string( $token ) ) {
+			return new WP_REST_Response(
+				array( 'message' => __( 'Missing token.', 'finn-loop-connect' ) ),
+				400
+			);
+		}
+
+		// AC-6(b): need the stored platform URL + connection ID.
+		$settings = $this->get_settings();
+		if ( ! $settings ) {
+			return new WP_REST_Response(
+				array( 'message' => __( 'This site is not paired with Finn-Loop.', 'finn-loop-connect' ) ),
+				403
+			);
+		}
+
+		$platform_url  = $settings['platformUrl'];
+		$connection_id = intval( $settings['connectionId'] );
+
+		// AC-6(c): validate the token by calling the platform back.
+		$endpoint = rtrim( $platform_url, '/' ) . '/api/wp/connections/' . $connection_id . '/validate-login-token';
+		$response = wp_remote_post(
+			$endpoint,
+			array(
+				'timeout'     => 30,
+				'redirection' => 0,
+				'headers'     => array(
+					'Content-Type' => 'application/json',
+					'Accept'       => 'application/json',
+					'User-Agent'   => 'FinnLoopConnect/' . $this->plugin_version() . ' (WP plugin; SSO)',
+				),
+				'body'        => wp_json_encode( array( 'token' => $token ) ),
+			)
+		);
+
+		if ( is_wp_error( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'message' => sprintf(
+						/* translators: %s: error message */
+						__( 'Could not reach the platform to validate the token: %s', 'finn-loop-connect' ),
+						$response->get_error_message()
+					),
+				),
+				502
+			);
+		}
+
+		$code = wp_remote_retrieve_response_code( $response );
+		$body = wp_remote_retrieve_body( $response );
+		$json = json_decode( $body, true );
+
+		if ( ! is_array( $json ) || empty( $json['ok'] ) ) {
+			$msg = is_array( $json ) && ! empty( $json['error'] )
+				? $json['error']
+				: __( 'Token validation failed.', 'finn-loop-connect' );
+			return new WP_REST_Response( array( 'message' => $msg ), 403 );
+		}
+
+		// AC-6(d): log in as the paired user.
+		$username = isset( $json['username'] ) ? sanitize_text_field( $json['username'] ) : '';
+		if ( '' === $username ) {
+			return new WP_REST_Response(
+				array( 'message' => __( 'Platform returned no username for this token.', 'finn-loop-connect' ) ),
+				403
+			);
+		}
+
+		$user = get_user_by( 'login', $username );
+		if ( ! $user ) {
+			return new WP_REST_Response(
+				array(
+					'message' => sprintf(
+						/* translators: %s: username */
+						__( 'User "%s" does not exist on this WordPress.', 'finn-loop-connect' ),
+						$username
+					),
+				),
+				403
+			);
+		}
+
+		// Log in + redirect to wp-admin.
+		wp_set_current_user( $user->ID );
+		wp_set_auth_cookie( $user->ID, true );
+
+		// Use a 302 redirect so the browser follows it immediately.
+		wp_safe_redirect( admin_url() );
+		exit;
 	}
 
 	/**

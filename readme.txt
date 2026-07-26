@@ -4,7 +4,7 @@ Tags: agency, management, pairing, application-passwords, remote
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.1.0
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -45,6 +45,9 @@ No. The settings page and pairing require the `manage_options` capability, and A
 
 == Changelog ==
 
+= 0.2.0 =
+* SSO auto-login: the platform's connection card gains a "Log into WP" button that opens this WP's admin in a new tab, logged in as the paired user. Uses single-use, 5-minute-expiry tokens validated against the platform.
+
 = 0.1.0 =
 * Initial release.
 * Pairing-code auto-connect: Tools → Finn-Loop Connect settings page.
@@ -52,6 +55,9 @@ No. The settings page and pairing require the `manage_options` capability, and A
 * Connection status display + Disconnect button.
 
 == Upgrade Notice ==
+
+= 0.2.0 =
+Adds SSO auto-login from the platform dashboard. Update the plugin + re-pair is NOT required — existing pairings work automatically.
 
 = 0.1.0 =
 First release. Requires WordPress 6.0+ and the Finn-Loop agency platform.
