@@ -1,0 +1,16 @@
+# WordPress plugin build artifacts
+*.zip
+/dist/
+/.dist/
+
+# Node (if a build step is ever added)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
