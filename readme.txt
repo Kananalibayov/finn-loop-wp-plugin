@@ -4,7 +4,7 @@ Tags: agency, management, pairing, application-passwords, remote
 Requires at least: 6.0
 Tested up to: 6.5
 Requires PHP: 7.4
-Stable tag: 0.3.0
+Stable tag: 0.4.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -44,6 +44,9 @@ The local connection state is cleared. The platform-side connection still exists
 No. The settings page and pairing require the `manage_options` capability, and Application Passwords are created for the current user. Pair as an administrator; the platform then uses that user's credentials for REST API access.
 
 == Changelog ==
+
+= 0.4.0 =
+* Remote settings sync: the platform can now read + write a strict allow-list of WP options (site title, tagline, visibility, posts per page, comment status, moderation email) from the dashboard via the plugin's REST endpoint. No arbitrary option writing — every option has a dedicated sanitizer.
 
 = 0.3.0 =
 * Health reporting: the plugin now reports WP version, active theme, plugin count, and a computed health score to the platform daily + on pairing. Surfaced on the connection card.

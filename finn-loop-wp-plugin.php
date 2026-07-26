@@ -3,7 +3,7 @@
  * Plugin Name:       Finn-Loop Connect
  * Plugin URI:        https://github.com/Kananalibayov/finn-loop-wp-plugin
  * Description:       Companion plugin for Finn-Loop. Connects this WordPress to your agency platform via a one-time pairing code — enables remote management, health reporting, and SSO from the dashboard.
- * Version:           0.3.0
+ * Version:           0.4.0
  * Author:            Finn-Loop
  * Author URI:        https://github.com/Kananalibayov/finn-loop
  * Text Domain:       finn-loop-connect
@@ -448,6 +448,30 @@ final class FinnLoop_Connect {
 				'permission_callback' => '__return_true', // Public — the token is the credential.
 			)
 		);
+		// AC-6 (issue #63): settings read.
+		register_rest_route(
+			'finn-loop/v1',
+			'/settings',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'handle_get_settings' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
+		// AC-7 (issue #63): settings write.
+		register_rest_route(
+			'finn-loop/v1',
+			'/settings',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'handle_update_settings' ),
+				'permission_callback' => function () {
+					return current_user_can( 'manage_options' );
+				},
+			)
+		);
 	}
 
 	/**
@@ -553,6 +577,71 @@ final class FinnLoop_Connect {
 	}
 
 	/**
+	 * AC-8 (issue #63): the strict allow-list of WP options the plugin will
+	 * read/write. Each entry maps option_key => sanitizer function name.
+	 *
+	 * @return array<string, string>
+	 */
+	private function settings_allow_list() {
+		return array(
+			'blogname'                => 'sanitize_text_field',
+			'blogdescription'         => 'sanitize_text_field',
+			'blog_public'             => 'finn_loop_sanitize_zero_or_one',
+			'posts_per_page'          => 'finn_loop_sanitize_int_range',
+			'default_comment_status'  => 'finn_loop_sanitize_open_closed',
+			'moderation_notify'       => 'finn_loop_sanitize_zero_or_one',
+		);
+	}
+
+	/**
+	 * AC-6 (issue #63): GET /finn-loop/v1/settings — return current values.
+	 *
+	 * @return WP_REST_Response
+	 */
+	public function handle_get_settings() {
+		$allow  = $this->settings_allow_list();
+		$values = array();
+		foreach ( $allow as $key => $sanitizer ) {
+			$values[ $key ] = get_option( $key );
+		}
+		return new WP_REST_Response( $values, 200 );
+	}
+
+	/**
+	 * AC-7 (issue #63): POST /finn-loop/v1/settings — update allow-listed options.
+	 *
+	 * @param WP_REST_Request $request The request.
+	 * @return WP_REST_Response
+	 */
+	public function handle_update_settings( $request ) {
+		$body     = $request->get_json_params();
+		$settings = is_array( $body ) && isset( $body['settings'] ) && is_array( $body['settings'] )
+			? $body['settings']
+			: array();
+
+		$allow   = $this->settings_allow_list();
+		$updated = array();
+
+		foreach ( $settings as $key => $value ) {
+			if ( ! isset( $allow[ $key ] ) ) {
+				continue; // Unknown key — skip, don't error.
+			}
+			$sanitizer   = $allow[ $key ];
+			$sanitized   = call_user_func( $sanitizer, $value );
+			$old         = get_option( $key );
+			if ( $old !== $sanitized ) {
+				update_option( $key, $sanitized );
+				$updated[ $key ] = $sanitized;
+			}
+		}
+
+		return new WP_REST_Response(
+			array( 'ok' => true, 'updated' => $updated ),
+			200
+		);
+	}
+
+	/**
 	 * AC-8 (issue #62): collect WP health data.
 	 *
 	 * @return array{wpVersion:string,themeName:string,pluginCount:int,healthScore:int}
@@ -634,6 +723,20 @@ final class FinnLoop_Connect {
 
 // Boot the plugin on `plugins_loaded`.
 add_action( 'plugins_loaded', array( 'FinnLoop_Connect', 'instance' ) );
+
+// AC-8 (issue #63): standalone sanitizers for the settings allow-list.
+function finn_loop_sanitize_zero_or_one( $value ) {
+	return absint( $value ) ? 1 : 0;
+}
+
+function finn_loop_sanitize_int_range( $value ) {
+	$n = absint( $value );
+	return max( 5, min( 100, $n ) );
+}
+
+function finn_loop_sanitize_open_closed( $value ) {
+	return ( 'closed' === $value ) ? 'closed' : 'open';
+}
 
 // AC-10 (issue #62): schedule/clear the daily health-report cron.
 register_activation_hook( __FILE__, 'finn_loop_activate_cron' );
